@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Data artifacts. The SQLite DB is published as a GitHub release asset, never
+# committed - a nightly binary would bloat the repo permanently.
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite.gz
+data/raw/

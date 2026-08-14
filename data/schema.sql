@@ -1,15 +1,15 @@
 CREATE TABLE IF NOT EXISTS players (
-    player_id   INTEGER PRIMARY KEY,   -- nba_api PERSON_ID, the join key everywhere
+    player_id   INTEGER PRIMARY KEY,
     name        TEXT NOT NULL,
     position    TEXT,
-    birth_date  TEXT                   -- ISO date, NULL for older players
+    birth_date  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS season_stats (
     player_id  INTEGER NOT NULL,
     season     TEXT NOT NULL,
     gp         INTEGER,
-    mpg        REAL,                   -- per game; every other counting stat is a season total
+    mpg        REAL,
     pts        INTEGER,
     reb        INTEGER,
     ast        INTEGER,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS game_logs (
     player_id  INTEGER NOT NULL,
     game_id    TEXT NOT NULL,
     season     TEXT NOT NULL,
-    date       TEXT NOT NULL,          -- ISO date
+    date       TEXT NOT NULL,
     min        REAL,
     pts        INTEGER,
     reb        INTEGER,
@@ -47,12 +47,12 @@ CREATE TABLE IF NOT EXISTS game_logs (
 );
 
 CREATE TABLE IF NOT EXISTS adp (
-    player_id      INTEGER,            -- NULL when name matching fails; adp_name keeps the raw value
-    adp_name       TEXT NOT NULL,      -- name as published, kept for auditing the match
+    player_id      INTEGER,
+    adp_name       TEXT NOT NULL,
     season         TEXT NOT NULL,
-    source         TEXT NOT NULL,      -- "fantasypros_avg", "yahoo", "espn", ...
+    source         TEXT NOT NULL,
     adp            REAL NOT NULL,
-    adp_sd         REAL,               -- NULL when the source publishes no spread
+    adp_sd         REAL,
     n_observations INTEGER,
     pulled_at      TEXT NOT NULL,
     PRIMARY KEY (season, source, adp_name)
@@ -68,12 +68,10 @@ CREATE TABLE IF NOT EXISTS draft_results (
     FOREIGN KEY (player_id) REFERENCES players(player_id)
 );
 
--- Rosters and injury designations are current-state only; the source has no history,
--- so this table is replaced wholesale on every refresh.
 CREATE TABLE IF NOT EXISTS player_status (
     player_id  INTEGER PRIMARY KEY,
     team       TEXT,
-    status     TEXT,                   -- roster status / injury designation
+    status     TEXT,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (player_id) REFERENCES players(player_id)
 );

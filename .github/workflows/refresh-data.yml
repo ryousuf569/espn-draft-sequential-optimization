@@ -1,0 +1,73 @@
+name: Refresh data
+
+# The SQLite DB is published as a release asset, never committed. A nightly
+# binary in git history would bloat the repo permanently.
+on:
+  schedule:
+    - cron: "0 9 * * *" # 09:00 UTC, after all US games have finished
+  workflow_dispatch:
+    inputs:
+      full_rebuild:
+        description: "Rebuild every season from scratch instead of the current one"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # required to upload the release asset
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Start from the previous DB so a nightly run only fetches what changed.
+      # Without this every run would re-pull every season and hammer the API.
+      - name: Download previous database
+        continue-on-error: true
+        run: |
+          gh release download data-latest --pattern 'nba.sqlite.gz' --dir data/ \
+            && gunzip -f data/nba.sqlite.gz \
+            && echo "restored previous db"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refresh NBA stats
+        run: |
+          if [ "${{ inputs.full_rebuild }}" = "true" ]; then
+            python data/fetch_nba.py
+          else
+            python data/fetch_nba.py --seasons "$(python -c 'import sys; sys.path.insert(0,"data"); import config; print(config.season_str(config.LAST_STATS_YEAR))')"
+          fi
+        working-directory: ${{ github.workspace }}
+
+      - name: Refresh ADP
+        run: python data/fetch_adp.py
+
+      - name: Verify database
+        run: python data/verify.py
+
+      - name: Package database
+        run: gzip -9 -c data/nba.sqlite > nba.sqlite.gz
+
+      # A single rolling release tag, so the download URL never changes.
+      - name: Publish as release asset
+        run: |
+          gh release view data-latest >/dev/null 2>&1 \
+            || gh release create data-latest --title "Latest data" \
+                 --notes "Nightly database build. Auto-updated."
+          gh release upload data-latest nba.sqlite.gz --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
