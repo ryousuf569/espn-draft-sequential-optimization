@@ -46,6 +46,18 @@ CREATE TABLE IF NOT EXISTS game_logs (
     FOREIGN KEY (player_id) REFERENCES players(player_id)
 );
 
+CREATE TABLE IF NOT EXISTS nba_draft (
+    player_id     INTEGER NOT NULL,
+    draft_year    INTEGER NOT NULL,
+    round_number  INTEGER,
+    overall_pick  INTEGER,
+    team          TEXT,
+    organization  TEXT,
+    age_at_draft  REAL,
+    PRIMARY KEY (player_id),
+    FOREIGN KEY (player_id) REFERENCES players(player_id)
+);
+
 CREATE TABLE IF NOT EXISTS adp (
     player_id      INTEGER,
     adp_name       TEXT NOT NULL,
@@ -76,9 +88,48 @@ CREATE TABLE IF NOT EXISTS player_status (
     FOREIGN KEY (player_id) REFERENCES players(player_id)
 );
 
+CREATE TABLE IF NOT EXISTS rosters (
+    player_id  INTEGER NOT NULL,
+    season     TEXT NOT NULL,
+    team       TEXT NOT NULL,
+    position   TEXT,
+    exp        TEXT, -- "R" for rookie, else years as a string, per nba_api
+    PRIMARY KEY (player_id, season, team),
+    FOREIGN KEY (player_id) REFERENCES players(player_id)
+);
+
+-- Realized rookie-season outcomes: the season_stats row for the season starting
+-- in a player's draft year. Derived by join in fetch_nba.py, rebuilt each run.
+CREATE TABLE IF NOT EXISTS rookie_outcomes (
+    player_id     INTEGER PRIMARY KEY,
+    draft_year    INTEGER NOT NULL,
+    season        TEXT NOT NULL,     -- the rookie season these outcomes are from
+    overall_pick  INTEGER,           -- NULL for undrafted
+    age_at_draft  REAL,
+    gp            INTEGER,
+    mpg           REAL,
+    total_min     REAL,              -- rate denominator; mpg * gp loses rounding
+    pts           INTEGER,
+    reb           INTEGER,
+    ast           INTEGER,
+    stl           INTEGER,
+    blk           INTEGER,
+    tov           INTEGER,
+    fg3m          INTEGER,
+    fgm           INTEGER,
+    fga           INTEGER,
+    ftm           INTEGER,
+    fta           INTEGER,
+    FOREIGN KEY (player_id) REFERENCES players(player_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_season_stats_season ON season_stats(season);
 CREATE INDEX IF NOT EXISTS idx_game_logs_season    ON game_logs(season);
 CREATE INDEX IF NOT EXISTS idx_game_logs_date      ON game_logs(date);
 CREATE INDEX IF NOT EXISTS idx_adp_season          ON adp(season);
 CREATE INDEX IF NOT EXISTS idx_adp_player          ON adp(player_id);
 CREATE INDEX IF NOT EXISTS idx_draft_results_player ON draft_results(player_id, season);
+CREATE INDEX IF NOT EXISTS idx_nba_draft_year       ON nba_draft(draft_year);
+CREATE INDEX IF NOT EXISTS idx_rosters_season_team  ON rosters(season, team);
+CREATE INDEX IF NOT EXISTS idx_rosters_season       ON rosters(season);
+CREATE INDEX IF NOT EXISTS idx_rookie_outcomes_pick ON rookie_outcomes(overall_pick);

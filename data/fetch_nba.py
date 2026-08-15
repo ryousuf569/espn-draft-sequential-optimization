@@ -1,14 +1,25 @@
 from nba_api.stats.endpoints import (
     commonallplayers,
     commonplayerinfo,
+    commonteamroster,
+    drafthistory,
     leaguedashplayerstats,
     playergamelogs,
 )
+from nba_api.stats.static import teams
 import argparse
 import time
 
 import sqlite_helpers
-from config import NBA_RETRIES, NBA_SLEEP, NBA_TIMEOUT, stats_seasons
+from config import (
+    CURRENT_SEASON,
+    NBA_RETRIES,
+    NBA_SLEEP,
+    NBA_TIMEOUT,
+    draft_years,
+    played_seasons,
+    season_str,
+)
 
 
 # every nba_api request goes through here so nothing skips the rate limit
@@ -127,11 +138,15 @@ def fetch_game_logs(conn, seasons):
 
 
 def fetch_bios(conn):
-    # the only per-player endpoint, so only ask about players still missing a bio
+    # the only per-player endpoint, so only ask about players still missing a
+    # bio. Drafted players are included even with no season_stats rows: an
+    # incoming rookie has none by definition, and age_at_draft is one of the two
+    # signals the rookie prior has before he plays a game.
     missing = conn.execute(
         "SELECT player_id FROM players "
         "WHERE birth_date IS NULL "
-        "  AND player_id IN (SELECT DISTINCT player_id FROM season_stats)"
+        "  AND (player_id IN (SELECT DISTINCT player_id FROM season_stats) "
+        "    OR player_id IN (SELECT player_id FROM nba_draft))"
     ).fetchall()
     print(f"bios: {len(missing)} to fetch (~{len(missing) * NBA_SLEEP / 60:.0f} min)")
 
@@ -155,6 +170,115 @@ def fetch_bios(conn):
             print(f"    {i}/{len(missing)}")
 
     conn.commit()
+
+
+def fetch_draft(conn, years):
+    known = {r[0] for r in conn.execute("SELECT player_id FROM players")}
+    rows = []
+
+    for year in years:
+        df = call(drafthistory.DraftHistory, season_year_nullable=str(year))[0]
+
+        for r in df.itertuples():
+            player_id = int(r.PERSON_ID)
+            # draft history includes picks who never signed and so never appear
+            # in commonallplayers; the foreign key would reject them
+            if player_id not in known:
+                continue
+            rows.append(
+                {
+                    "player_id": player_id,
+                    "draft_year": year,
+                    "round_number": num(r.ROUND_NUMBER),
+                    # picks that were forfeited come back as 0, not NULL
+                    "overall_pick": num(r.OVERALL_PICK) or None,
+                    "team": r.TEAM_ABBREVIATION or None,
+                    "organization": r.ORGANIZATION or None,
+                    "age_at_draft": None,  # filled by backfill_draft_ages
+                    }
+            )
+
+        print(f"nba_draft {year}: {len(df)} picks")
+
+    sqlite_helpers.upsert(conn, "nba_draft", rows)
+    print(f"nba_draft: {len(rows)} linked to a player")
+
+
+# age at draft is the second pre-debut signal after pick number, and it needs
+# birth_date, which fetch_bios only fills for players with season_stats rows.
+# Run after fetch_bios; recomputed each run so late-arriving bios get picked up.
+def backfill_draft_ages(conn):
+    updated = conn.execute(
+        # NBA drafts are held in late June, so June 26 of the draft year is a
+        # closer anchor than Jan 1 and keeps one-and-dones on the right side of
+        # a birthday. Exact draft dates are not in the API.
+        "UPDATE nba_draft SET age_at_draft = ("
+        "  SELECT ROUND((JULIANDAY(nba_draft.draft_year || '-06-26') "
+        "                - JULIANDAY(p.birth_date)) / 365.25, 2) "
+        "  FROM players p WHERE p.player_id = nba_draft.player_id "
+        "    AND p.birth_date IS NOT NULL"
+        ") WHERE EXISTS ("
+        "  SELECT 1 FROM players p WHERE p.player_id = nba_draft.player_id "
+        "    AND p.birth_date IS NOT NULL"
+        ")"
+    ).rowcount
+    conn.commit()
+    print(f"nba_draft ages: {updated} filled")
+
+
+def fetch_rosters(conn, seasons):
+    known = {r[0] for r in conn.execute("SELECT player_id FROM players")}
+
+    for season in seasons:
+        rows = []
+        # the only fetch that is per-team rather than per-season, so it is 30
+        # requests; worth it because this is the sole source of 2026-27 rows
+        for team in teams.get_teams():
+            df = call(
+                commonteamroster.CommonTeamRoster,
+                team_id=team["id"],
+                season=season,
+            )[0]
+
+            rows.extend(
+                {
+                    "player_id": int(r.PLAYER_ID),
+                    "season": season,
+                    "team": team["abbreviation"],
+                    "position": r.POSITION or None,
+                    "exp": str(r.EXP) if r.EXP else None,
+                }
+                for r in df.itertuples()
+                if int(r.PLAYER_ID) in known  # respect the foreign key
+            )
+
+        sqlite_helpers.upsert(conn, "rosters", rows)
+        print(f"rosters {season}: {len(rows)}")
+
+
+# Realized rookie seasons, the training set for the rookie prior. A player's
+# rookie season is the one starting in his draft year, so this is a join rather
+# than a fetch -- no requests, and it re-derives cleanly whenever stats change.
+def backfill_rookie_outcomes(conn):
+    conn.execute("DELETE FROM rookie_outcomes")
+    inserted = conn.execute(
+        "INSERT INTO rookie_outcomes ("
+        "  player_id, draft_year, season, overall_pick, age_at_draft, "
+        "  gp, mpg, total_min, pts, reb, ast, stl, blk, tov, "
+        "  fg3m, fgm, fga, ftm, fta) "
+        "SELECT d.player_id, d.draft_year, s.season, d.overall_pick, "
+        "       d.age_at_draft, s.gp, s.mpg, ROUND(s.mpg * s.gp, 1), "
+        "       s.pts, s.reb, s.ast, s.stl, s.blk, s.tov, "
+        "       s.fg3m, s.fgm, s.fga, s.ftm, s.fta "
+        "FROM nba_draft d "
+        "JOIN season_stats s ON s.player_id = d.player_id "
+        # the season starting in the draft year is the rookie season; a player
+        # who did not play that year has no row and is correctly absent
+        " AND s.season = d.draft_year || '-' || SUBSTR(d.draft_year + 1, 3, 2) "
+        "WHERE s.gp > 0"
+    ).rowcount
+    conn.commit()
+    print(f"rookie_outcomes: {inserted}")
 
 
 def fetch_status(conn):
@@ -185,9 +309,14 @@ def main():
     ap.add_argument("--seasons", nargs="+", help="e.g. 2024-25 2025-26")
     ap.add_argument("--skip-logs", action="store_true", help="skip game logs")
     ap.add_argument("--skip-bios", action="store_true", help="skip birth dates")
+    ap.add_argument("--skip-rosters", action="store_true", help="skip rosters (30 requests/season)")
     args = ap.parse_args()
 
-    seasons = args.seasons or stats_seasons()
+    # stats only for seasons that have been played; rosters include the upcoming
+    # one, which is the whole point of fetching them separately
+    seasons = args.seasons or played_seasons()
+    roster_seasons = args.seasons or [*played_seasons(), CURRENT_SEASON]
+
     conn = sqlite_helpers.connect()
     sqlite_helpers.init(conn)
 
@@ -195,8 +324,14 @@ def main():
     fetch_season_stats(conn, seasons)
     if not args.skip_logs:
         fetch_game_logs(conn, seasons)
+    fetch_draft(conn, draft_years())
     if not args.skip_bios:
         fetch_bios(conn)
+    # after fetch_bios so it sees the birth dates that run just filled in
+    backfill_draft_ages(conn)
+    if not args.skip_rosters:
+        fetch_rosters(conn, roster_seasons)
+    backfill_rookie_outcomes(conn)
     fetch_status(conn)
 
     conn.close()

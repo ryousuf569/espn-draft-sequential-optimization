@@ -1,6 +1,7 @@
 # data/
 
-Builds `nba.sqlite`: player stats, game logs, and historical ADP.
+Builds `nba.sqlite`: player stats, game logs, historical ADP, NBA draft history
+and rosters.
 
 The DB is **not committed**. CI publishes it as a release asset (`data-latest`),
 because a nightly binary in git history would bloat the repo permanently.
@@ -8,10 +9,10 @@ because a nightly binary in git history would bloat the repo permanently.
 ```bash
 pip install -r requirements.txt
 
-python data/fetch_nba.py          # players, season stats, game logs, rosters
+python data/fetch_nba.py          # players, stats, game logs, draft, rosters
 python data/fetch_adp.py          # historical ADP
 python data/verify.py             # sanity checks; non-zero exit on failure
-python data/draft_slots.py --season 2025-26
+python data/draft_slots.py --season 2026-27
 ```
 
 Grab the latest build instead of rebuilding:
@@ -28,7 +29,7 @@ gunzip data/nba.sqlite.gz
 | `config.py` | Seasons, rate limits, paths. Everything tunable. |
 | `schema.sql` | Table definitions. |
 | `sqlite_helpers.py` | `connect` / `init` / `upsert` / `count`. |
-| `fetch_nba.py` | nba_api: players, season stats, game logs, rosters, injury status. |
+| `fetch_nba.py` | nba_api: players, season stats, game logs, draft, rosters, injury status. |
 | `fetch_adp.py` | FantasyPros historical ADP. |
 | `draft_slots.py` | Per-player draft-slot distributions — all Model B consumes. |
 | `verify.py` | Data quality gate. CI refuses to publish if it fails. |
@@ -46,6 +47,9 @@ ADP was the binding risk, so it was checked before anything was built on it.
 | `game_logs` | `playergamelogs` | Bulk per season, ~26k rows/season. |
 | `adp` | FantasyPros | 12 seasons, 99.4% linked to `player_id`. |
 | `player_status` | `commonallplayers` | Current only; replaced each run. |
+| `nba_draft` | `drafthistory` | Draft classes 2009-2026, one request per year. |
+| `rosters` | `commonteamroster` | 30 requests per season; 580 rows for 2026-27. |
+| `rookie_outcomes` | *(derived)* | Join, no requests. Rebuilt each run. |
 | `draft_results` | *(none yet)* | Empty; see below. |
 
 ## Traps
@@ -72,6 +76,28 @@ players on the board silently fail to link — this cost 18 rows including Joki�
 and Dončić before it was fixed. Link rate is now 99.4%; the 5 unmatched are
 players who never appeared in an NBA game.
 
+**2026-27 has rosters but no stats.** nba_api already serves the 2026-27 rosters
+and the 2026 draft class, with real `PERSON_ID`s, but no stats until opening
+night. Stats and game logs use `played_seasons()`, which stops at the last played
+season; rosters and draft use `CURRENT_SEASON`. Pointing a stats fetch at 2026-27
+just writes a season of empty rows.
+
+**Rookie bios need an exemption.** `fetch_bios` only asks about players who
+already appear in `season_stats`, which excludes every incoming rookie. Without
+the `nba_draft` clause in that query `age_at_draft` stays NULL for exactly the
+players that need it, with no error anywhere. So `fetch_draft` runs before
+`fetch_bios` and `backfill_draft_ages` after it.
+
+**580 roster spots is not 450.** Preseason rosters include camp, two-way and
+Exhibit-10 players who get cut, so `rosters` holds ~19 per team rather than the
+~15 that stick. 80 are flagged `EXP = 'R'` against 60 drafted; the rest went
+undrafted. `CommonAllPlayers` says 79, so neither count is authoritative.
+
+**Forfeited picks come back as 0.** `OVERALL_PICK` is `0` rather than NULL for a
+forfeited pick, so `fetch_draft` maps it to NULL. A literal 0 would sort ahead of
+the first pick. Draft history also lists players who never signed and never
+appear in `commonallplayers`, so those are skipped.
+
 **Autodraft artifacts.** Abandoned drafts contaminate raw pick data: a team on
 autopilot takes the top of the queue at its turn every round, piling mass onto
 multiples of the team count. `autodraft_suspect()` flags a distribution with a
@@ -92,8 +118,24 @@ one request returns ~26k game logs. The only per-player endpoint is
 `commonplayerinfo` for birth dates, which is why `fetch_bios` asks only about
 players whose bio is still missing, making reruns nearly free.
 
+Rosters are the one fetch that is per team, so a season costs 30 requests, about
+90 seconds at the current sleep. `--skip-rosters` skips it when you only want
+stats.
+
 FantasyPros `robots.txt` sets `Crawl-delay: 5`; `ADP_SLEEP` honours it. ADP is
 historical and immutable, so it needs a full pull only once.
+
+## `rookie_outcomes` is derived
+
+A join, not a fetch: `nba_draft` against the `season_stats` row for the season
+starting in the player's draft year, filtered to `gp > 0`. It costs no requests
+and is dropped and rebuilt each run, so it re-derives whenever stats change. A
+drafted player who never played has no row.
+
+`total_min` is stored rather than recomputed from `mpg * gp`, since `mpg` is
+rounded at ingest. `overall_pick` is NULL for undrafted players and stored raw,
+not bucketed. `verify.py` checks that every row's season starts in its draft
+year, which catches the season-string join drifting.
 
 ## `draft_results` is empty
 
