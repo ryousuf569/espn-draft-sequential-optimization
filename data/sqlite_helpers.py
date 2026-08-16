@@ -1,6 +1,6 @@
 import sqlite3
 
-from config import DB_PATH, SCHEMA_PATH
+from data.config import DB_PATH, SCHEMA_PATH
 
 
 def connect(path=DB_PATH):
