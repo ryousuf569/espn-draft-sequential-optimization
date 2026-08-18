@@ -134,6 +134,44 @@ def shrinkage_weight(career_minutes, k):
     return n / (n + k)
 
 
+def _summarize(df, keys):
+    grouped = df.groupby(keys, dropna=False)
+    stats = grouped.apply(playing_time, include_groups=False)
+    rate = grouped.apply(rates, include_groups=False)
+    return stats.join(rate).reset_index()
+
+
+# a thin cell borrows its rates from the whole tier, and says so
+def _fill_thin_cells(cells, tier_level):
+    tiers = tier_level.set_index("draft_tier")
+    filled = []
+
+    for row in cells.to_dict("records"):
+        thin = row["n_rate"] < MIN_CELL_N and row["draft_tier"] in tiers.index
+        if thin:
+            fallback = tiers.loc[row["draft_tier"]]
+            for cat in CATEGORIES:
+                row[cat] = fallback[cat]
+        row["borrowed_rates"] = thin
+        filled.append(row)
+
+    return pd.DataFrame(filled)
+
+
+# one row per (position, draft_tier): the per-minute rate for each category,
+# plus the mpg a random pick at that slot actually plays
+def compute_draft_tier_priors(conn, as_of_season):
+    df = load_rookies(conn, int(as_of_season[:4]))
+
+    tier_level = _summarize(df, ["draft_tier"])
+    priors = _fill_thin_cells(_summarize(df, ["position", "draft_tier"]), tier_level)
+
+    cols = ["position", "draft_tier", "n_players", "n_played", "n_rate",
+            "never_played_rate", "mpg", "mpg_if_played", *CATEGORIES,
+            "borrowed_rates"]
+    return priors[cols].sort_values(["draft_tier", "position"]).reset_index(drop=True)
+
+
 # simple tests to catch bugs
 def self_test(conn, as_of_year=2026):
     failures = []
