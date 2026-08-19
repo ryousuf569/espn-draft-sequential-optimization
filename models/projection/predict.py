@@ -10,6 +10,7 @@ from data.sqlite_helpers import connect
 from feature_minutes import GAMES_IN_SEASON, build_minutes_features
 from feature_rates import build_rate_features
 from rookie_priors import compute_draft_tier_priors, norm_pos, shrinkage_weight, tier_for_pick
+import train_games
 import train_minutes
 import train_rates
 
@@ -19,6 +20,9 @@ OUT_CSV = ARTIFACT_DIR / "projections.csv"
 # minutes gets its own k because it is measured in minutes per game, not in the
 # per-minute units the rate categories share
 MINUTES_SHRINKAGE_K = 500.0
+
+# games is measured in games, so it needs its own k too
+GAMES_SHRINKAGE_K = 500.0
 
 # who to project: everyone on an NBA roster for the season being drafted
 POOL_SQL = """
@@ -35,7 +39,11 @@ WHERE ro.season = ?
 
 
 def model_path(target):
-    return ARTIFACT_DIR / ("minutes.json" if target == "mpg" else f"rate_{target}.json")
+    if target == "mpg":
+        return ARTIFACT_DIR / "minutes.json"
+    if target == "gp":
+        return ARTIFACT_DIR / "games.json"
+    return ARTIFACT_DIR / f"rate_{target}.json"
 
 
 def load_booster(target):
@@ -103,6 +111,9 @@ def predict_raw(rows, target, booster):
     if target == "mpg":
         X = pd.concat([rows[train_minutes.feature_columns(rows)],
                        train_minutes.encode_categoricals(rows)], axis=1)
+    elif target == "gp":
+        X = pd.concat([rows[train_games.feature_columns(rows)],
+                       train_games.encode_categoricals(rows)], axis=1)
     else:
         X = pd.concat([rows[train_rates.feature_columns(rows)],
                        train_rates.encode_tiers(rows)], axis=1)
@@ -142,7 +153,22 @@ def project_season(conn, as_of_season=TARGET_SEASON, games=GAMES_IN_SEASON):
         for raw, pos, tier, mins in zip(raw_mpg, out["position"], out["draft_tier"],
                                         out["career_min"])
     ]
-    out["total_min"] = out["mpg"] * games
+    # Projected games, not a flat 82. Assuming every player plays every game
+    # inflated every season total by whatever a player missed -- league mean GP is
+    # ~46 -- and it was what put four players who logged zero games near the top of
+    # the 2025-26 board. Rookies fall back to the tier prior, same as minutes.
+    raw_gp = pd.Series(np.nan, index=min_rows.index)
+    if known.any():
+        raw_gp.loc[known] = predict_raw(min_rows[known], "gp", load_booster("gp"))
+
+    out["gp"] = np.clip([
+        apply_shrinkage(raw, pos, tier, mins, tier_priors, GAMES_SHRINKAGE_K,
+                        column="gp_prior")
+        for raw, pos, tier, mins in zip(raw_gp, out["position"], out["draft_tier"],
+                                        out["career_min"])
+    ], 0.0, float(games))
+
+    out["total_min"] = out["mpg"] * out["gp"]
 
     for cat in CATEGORIES:
         raw = pd.Series(np.nan, index=rate_rows.index)
