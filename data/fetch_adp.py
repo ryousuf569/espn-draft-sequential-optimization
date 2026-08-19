@@ -104,27 +104,45 @@ def fetch_year(year):
     return rows
 
 
+# strip accents and punctuation but KEEP any generational suffix: nba_api writes
+# "Nikola Jokić", FantasyPros writes "Jokic", and without this the best players on
+# the board fail to link
 def normalize(name):
-    # strip accents: nba_api writes "Nikola Jokić", FantasyPros writes "Jokic",
-    # and without this the best players on the board fail to link
     name = unicodedata.normalize("NFKD", name)
     name = "".join(c for c in name if not unicodedata.combining(c))
     name = name.lower().replace(".", "").replace("'", "").replace("-", " ")
-    name = re.sub(r"\s+(jr|sr|ii|iii|iv|v)$", "", name.strip())
-    return re.sub(r"\s+", " ", name)
+    return re.sub(r"\s+", " ", name.strip())
 
 
-# ADP sources publish names, not ids, so match them to nba_api player_id
+# the same, with a trailing Jr/Sr/II/III/IV dropped, for the case where the two
+# sources disagree only about the suffix ("Russell Westbrook III" vs "Russell
+# Westbrook", who is the same man and the only Westbrook in the league)
+def normalize_base(name):
+    return re.sub(r"\s+(jr|sr|ii|iii|iv|v)$", "", normalize(name)).strip()
+
+
+# ADP sources publish names, not ids, so match them to nba_api player_id.
+#
+# Exact name first, suffix-stripped only as a fallback. Stripping the suffix up
+# front collapsed "Jaren Jackson Jr." onto "Jaren Jackson", and since the lookup
+# kept the lowest id that linked seven sons to their fathers across all 12 seasons
+# -- Jackson, Hardaway, Nance, Porter, Trent, Smith and Payton. The father has no
+# current roster row and no current stats, so those players silently became
+# position-less ghosts worth nothing, which is worse than being unmatched.
 def link_players(conn):
-    lookup = {}
+    exact, base = {}, {}
     for pid, name in conn.execute("SELECT player_id, name FROM players"):
-        lookup.setdefault(normalize(name), pid)
+        exact.setdefault(normalize(name), pid)
+        # a base-name collision means two real players share it (father and son),
+        # so the base map must not answer for either of them
+        key = normalize_base(name)
+        base[key] = None if key in base else pid
 
     unmatched = []
     for (adp_name,) in conn.execute(
         "SELECT DISTINCT adp_name FROM adp WHERE player_id IS NULL"
     ).fetchall():
-        pid = lookup.get(normalize(adp_name))
+        pid = exact.get(normalize(adp_name)) or base.get(normalize_base(adp_name))
         if pid:
             conn.execute(
                 "UPDATE adp SET player_id = ? WHERE adp_name = ?", (pid, adp_name)

@@ -103,6 +103,9 @@ def playing_time(group):
             # what a random pick at this slot plays per team game, zeros folded in.
             # This is the one that multiplies the rates downstream.
             "mpg": minutes_played / n / 82.0 if n else float("nan"),
+            # expected games for a random pick at this slot, zeros folded in, which
+            # is what a rookie's availability shrinks toward when he has no history
+            "gp_prior": games_played / n if n else float("nan"),
         }
     )
 
@@ -167,7 +170,7 @@ def compute_draft_tier_priors(conn, as_of_season):
     priors = _fill_thin_cells(_summarize(df, ["position", "draft_tier"]), tier_level)
 
     cols = ["position", "draft_tier", "n_players", "n_played", "n_rate",
-            "never_played_rate", "mpg", "mpg_if_played", *CATEGORIES,
+            "never_played_rate", "mpg", "mpg_if_played", "gp_prior", *CATEGORIES,
             "borrowed_rates"]
     return priors[cols].sort_values(["draft_tier", "position"]).reset_index(drop=True)
 
