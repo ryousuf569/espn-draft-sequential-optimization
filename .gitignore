@@ -164,8 +164,9 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
-/site
+# NOT ignored: the stock Python template ignores /site for mkdocs, but site/ is
+# the Streamlit draft assistant here, board.json included -- the deployed app
+# reads that file and has no database to rebuild it from.
 
 # mypy
 .mypy_cache/

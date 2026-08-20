@@ -86,7 +86,8 @@ to 18.5.
 | [`models/projection/`](models/projection/) | Model A. XGBoost per category, rookie priors, games played, walk-forward validation. |
 | [`models/behaviour/`](models/behaviour/) | Model B. Kaplan–Meier and Cox survival models over draft durations, calibration, and the availability query the rollout calls. |
 | [`models/decision/`](models/decision/) | Rollout, the five policies, the backtest harness, plots. |
-| [`tests/`](tests/) | 141 tests. The 70 that need no database run in CI on every push. |
+| [`site/`](site/) | The live draft assistant: a Streamlit app over a precomputed survival board. Manual pick tracker, no autodraft. |
+| [`tests/`](tests/) | 186 tests. The 115 that need no database run in CI on every push. |
 | [`writeup/`](writeup/) | The paper and its figures. |
 
 The interface between Model B and the decision layer is one function.
@@ -116,9 +117,36 @@ python models/decision/plots.py        # figures into artifacts/plots/
 Tests:
 
 ```bash
-pytest                      # 141 tests
-pytest -m "not needs_db"    # the 70 that need no database
+pytest                      # 186 tests
+pytest -m "not needs_db"    # the 115 that need no database
 ```
+
+## The draft assistant
+
+`site/` is the model with a face on it. You draft in your real league on another
+screen and log each pick here as it happens; for everyone left on the board it
+shows P(still there at my next turn | on the board now) -- the same S(k)/S(j)
+ratio the rollout consumed, which is the only number this app claims.
+
+The conditioning is the whole point. An ADP-5 player who is somehow still there
+at pick 20 has already told you something, and dividing by S(20) is what uses it.
+
+```bash
+pip install -r site/requirements.txt
+python site/export_board.py            # fits the Cox model, writes site/board.json
+streamlit run site/app.py
+```
+
+`export_board.py` is the only part that touches the database. It writes a 175 KB
+`board.json` -- 256 players x 150 picks of int16 survival scaled by 1000 -- which
+is committed, so the deployed app needs no database, no `nba_api`, and no
+`lifelines`. Re-run it when the ADP board changes. `TARGET_SEASON` has no ADP
+until the summer, so it falls back to the newest season that has a board.
+
+The app does not autodraft, does not run the Monte Carlo rollout (2.5 s per call,
+worth -0.14 points), and does not show projections (rank correlation 0.331 against
+ADP's 0.574). It ranks by ADP and says so on the panel that matters. Deploys to
+Railway from `railway.json`.
 
 ## Leak detection is a gate, not a report
 
