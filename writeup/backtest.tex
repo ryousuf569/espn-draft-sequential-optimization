@@ -6,10 +6,11 @@
 \usepackage{graphicx}
 \usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
 \usepackage{caption}
+\graphicspath{{../artifacts/plots/}}
 
 \title{Does draft-order modeling beat expert consensus?\\
 \large A counterfactual evaluation of five drafting policies}
-\author{Fantasy basketball draft optimization}
+\author{Yousuf Rashid\\ \small University of Waterloo}
 \date{}
 
 \begin{document}
@@ -138,14 +139,38 @@ Rung & Policy & {Mean} & {Edge} & {Win rate} & 90\% interval \\
 \end{tabular}
 \end{table}
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{ladder.png}
+\caption{The ladder as distributions rather than means. The violins are realized
+starter value across all 1{,}056 paired drafts per rung; the lower panel is the
+paired difference against the rung below with its 5th--95th percentile band. Every
+band except rung 4's contains zero, which is the shape of the whole result: the
+losses are real but small against the draft's own variance.}
+\label{fig:ladder}
+\end{figure}
+
 Rung 3 is the comparison the design exists for. It holds projections fixed
 against rung 2 and changes only whether the policy simulates forward, so it
 isolates sequencing from projection quality. The answer is $-0.14$ points and a
-45.7\% win rate. Sequencing does not help.
+45.7\% win rate. Sequencing does not help. Figure~\ref{fig:ladder} shows why the
+means alone understate how little separates the rungs: the distributions overlap
+almost entirely.
 
 Against ADP directly, rung 3 wins 25.6\% of paired drafts and zero of twelve
 draft slots. It is not that sequencing works from some positions and not others.
-It loses everywhere.
+It loses everywhere. Figure~\ref{fig:sequencing} is the same comparison
+per draft rather than in aggregate.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{sequencing_effect.png}
+\caption{Sequencing on identical inputs, draft by draft. If simulating the board
+forward helped, this would sit to the right of zero. It is centred on it, with a
+median of $-0.44$ and a 5th--95th range of $[-14.2, +14.6]$: the per-draft spread is
+two orders of magnitude wider than the effect being measured.}
+\label{fig:sequencing}
+\end{figure}
 
 \subsection{The result I nearly published}
 
@@ -168,6 +193,24 @@ A negative result is only useful with a diagnosis, so I tested each value estima
 directly against realized production. Rank correlation, six seasons, higher is
 better.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.86\textwidth]{win_rates.png}
+\caption{Share of paired drafts each policy wins against the incumbent. A policy
+that merely had higher variance would sit near 50\%; every rung sits below it.}
+\label{fig:winrates}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{by_slot.png}
+\caption{Edge over ADP by draft slot. Sequencing should pay most from the turn
+ends, where the wait between picks is longest, and it does not pay anywhere: rung 3
+loses at all twelve slots. A policy that worked from some positions and not others
+would show a slope here.}
+\label{fig:byslot}
+\end{figure}
+
 \begin{table}[h]
 \centering
 \caption{How well each ranker predicts realized value (Spearman $\rho$).}
@@ -184,7 +227,8 @@ Own projections           & 0.331 & 0.270 \\
 \end{table}
 
 ADP wins on the full board and again in the top 60, where drafts are actually
-decided. So rungs 1 through 4 are not losing because the decision layer is
+decided, and Figures~\ref{fig:winrates} and~\ref{fig:byslot} show the consequence
+draft by draft and slot by slot. So rungs 1 through 4 are not losing because the decision layer is
 broken. They are optimizing a worse objective than the ranking they are trying to
 beat, and no amount of sequencing fixes an inferior input. Rung 3 was doing
 competent inference on the wrong numbers.
@@ -193,6 +237,30 @@ This is a market-efficiency finding, and in hindsight it should have been the
 prior. ADP is a consensus of experts who update daily on injury news, minutes
 expectations, and beat reporting. My projections see prior-season box scores.
 When those two disagree, the box scores are usually the ones missing something.
+
+\subsection{Where the result does and does not hold}
+
+The finding survives both cuts of the sweep. Splitting by season checks that no
+single year is carrying it, and splitting by league size checks the mechanism: a
+deeper board means longer waits between picks, so if sequencing worked at all it
+should work best in the smallest league.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{by_season.png}
+\caption{Mean realized starter value by season. The rung ordering is stable across
+all six, so the result is not one season's injuries. Absolute values move a lot
+between seasons, which is why every comparison in this paper is paired.}
+\label{fig:byseason}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{by_league_size.png}
+\caption{Edge over ADP by league size. Ten and twelve teams give the same answer.
+The mechanism predicted a gradient here and there is not one.}
+\label{fig:byleaguesize}
+\end{figure}
 
 \subsection{One correction to the table}
 
@@ -273,10 +341,17 @@ noise, and it would have told me the same thing about any other idea I tried.
       harness, plots.
 \item \texttt{artifacts/backtest.csv} --- all 4{,}400 drafts, one row each.
 \item \texttt{artifacts/ablation\_ladder.csv} --- the ladder table.
+
+\item \texttt{tests/} --- 141 tests. The 70 that need no database run in CI on
+      every push; the rest skip, since the database is published as a release
+      asset rather than committed.
 \end{itemize}
 
-Every module runs standalone and prints its own checks. Splits are temporal
+Every module also runs standalone as a worked example. Splits are temporal
 everywhere: a draft is a point in time, and training on 2025 to predict 2019 would
-be a leak that reports a better number for itself.
+be a leak that reports a better number for itself. Leak detection is a gate rather
+than only a test --- the rate trainer refuses to run if it fires, and beyond
+checking feature names it permutes the current season's statistics and rebuilds,
+since a feature whose value moves was reading the season it is meant to predict.
 
 \end{document}

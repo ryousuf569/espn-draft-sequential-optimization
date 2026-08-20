@@ -196,39 +196,6 @@ def project_season(conn, as_of_season=TARGET_SEASON, games=GAMES_IN_SEASON):
     return out.sort_values("mpg", ascending=False).reset_index(drop=True)
 
 
-# the projections have to be usable, not just present
-def verify(df, tier_priors):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("every player projected once", not df["player_id"].duplicated().any())
-    check("no missing minutes", df["mpg"].notna().all())
-    check("no missing categories",
-          bool(df[[c for c in CATEGORIES]].notna().all().all()))
-    check("minutes are plausible", bool(df["mpg"].between(0, 48).all()),
-          f"{df['mpg'].min():.1f}-{df['mpg'].max():.1f}")
-    check("percentages in range",
-          bool(df[["fg_pct", "ft_pct"]].stack().between(0, 1).all()))
-    check("counting stats are non-negative",
-          bool((df[["pts", "reb", "ast", "stl", "blk", "fg3m", "tov"]] >= 0).all().all()))
-
-    # the rookie path is the reason this module exists: with no minutes behind
-    # him, a rookie's projection has to be exactly the prior
-    rookies = df[df["is_rookie"] == 1]
-    if not rookies.empty:
-        row = rookies.iloc[0]
-        prior = lookup_prior(tier_priors, row["position"], row["draft_tier"], "mpg")
-        check("rookies collapse to the tier prior",
-              bool(np.isclose(row["mpg"], prior)), f"n={len(rookies)}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 30)
@@ -238,7 +205,6 @@ if __name__ == "__main__":
     priors = compute_draft_tier_priors(conn, TARGET_SEASON)
 
     print(f"{TARGET_SEASON}: {len(proj)} players, {int(proj.is_rookie.sum())} rookies\n")
-    verify(proj, priors)
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     proj.to_csv(OUT_CSV, index=False)

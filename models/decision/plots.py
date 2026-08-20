@@ -335,29 +335,6 @@ def plot_all(df, metric="starter_value", out_dir=None):
     return made
 
 
-# a figure that silently drops a policy is worse than no figure
-def verify(df, paths):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("figures were written", len(paths) > 0, f"{len(paths)} files")
-    check("every file exists and is non-trivial",
-          all(p.exists() and p.stat().st_size > 5000 for p in paths),
-          f"smallest {min(p.stat().st_size for p in paths) // 1024}kb")
-
-    # the ladder has to show every rung that ran, or a reader thinks one was skipped
-    policies = _policies_in(df)
-    check("every rung in the data has a colour",
-          all(p in RUNG_COLOURS for p in policies), f"{len(policies)} rungs")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     from backtest import OUT_CSV
 
@@ -369,7 +346,6 @@ if __name__ == "__main__":
           f"{df['season'].nunique()} seasons\n")
 
     paths = plot_all(df)
-    verify(df, paths)
 
     for p in paths:
         print(f"  wrote {p}")

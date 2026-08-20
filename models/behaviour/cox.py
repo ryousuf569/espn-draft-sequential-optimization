@@ -96,52 +96,6 @@ def predict_survival(cph, player_rows):
     return cph.predict_survival_function(design_for_prediction(cph, player_rows))
 
 
-# a fitted Cox model has to beat coin-flipping and point the right way
-def verify(cph, df):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    kept, dropped = usable_covariates(df)
-    check("model fit", cph is not None, f"{len(kept)} covariates")
-    if dropped:
-        print(f"        dropped as constant: {dropped}")
-
-    check("concordance beats chance", cph.concordance_index_ > 0.5,
-          f"{cph.concordance_index_:.4f}")
-
-    # The board is near-deterministic, so the top and bottom hazards must be far apart:
-    # within an order of magnitude means the coefficient has been shrunk flat.
-    rank_spread = float(df["platform_rank"].max() - df["platform_rank"].min())
-    board_coef = float(cph.params_.get("platform_rank", 0.0))
-    spread_hr = float(np.exp(abs(board_coef) * rank_spread))
-    check("board rank separates the top from the bottom", spread_hr > 100.0,
-          f"hazard ratio across the board {spread_hr:.1f}x")
-    check("no coefficient exploded",
-          bool(cph.params_.abs().max() < 10.0), f"max |coef| {cph.params_.abs().max():.4f}")
-    check("standard errors are finite", bool(np.isfinite(cph.standard_errors_).all()))
-
-    # A worse board rank must lower the hazard, so this coefficient is negative --
-    # if it is not, the rank is joined backwards somewhere upstream.
-    board = float(cph.params_.get("platform_rank", float("nan")))
-    check("worse board rank lowers the draft hazard", board < 0, f"coef {board:+.5f}")
-
-    # survival has to be a survival function for a real player row
-    row = df.head(1)
-    curve = predict_survival(cph, row)
-    values = curve.iloc[:, 0].to_numpy()
-    check("survival is in [0, 1]", bool(values.min() >= -1e-9 and values.max() <= 1 + 1e-9),
-          f"{values.min():.4f}-{values.max():.4f}")
-    check("survival never increases",
-          bool(np.all(np.diff(values) <= 1e-9)))
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 30)
@@ -158,7 +112,6 @@ if __name__ == "__main__":
     print(f"{season}: {len(feats)} rows, "
           f"{int(feats['event_observed'].sum())} events, "
           f"concordance {cph.concordance_index_:.4f}\n")
-    verify(cph, feats)
 
     print("\nhazard ratios")
     print(get_hazard_ratios(cph).round(5).to_string())

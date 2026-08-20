@@ -124,69 +124,6 @@ class RosterState:
         return 0.25
 
 
-# the legality rules have to hold on the cases that would break a rollout
-def verify():
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    state = RosterState()
-    check("roster size is slots plus bench", state.size == 4 + 4 + 2 + BENCH_SLOTS,
-          f"{state.size}")
-
-    # filling every guard slot must not block a guard while the bench is open
-    for _ in range(4):
-        state.add(position_index("G"))
-    check("starting slots fill before the bench", state.bench_used == 0,
-          f"bench {state.bench_used}")
-    check("a fifth guard goes to the bench", state.can_add(position_index("G")))
-
-    state.add(position_index("G"))
-    check("the fifth guard used a bench seat", state.bench_used == 1)
-
-    # a full roster must reject everyone, or the rollout drafts 14 players
-    full = RosterState()
-    for pos in ("G",) * 4 + ("F",) * 4 + ("C",) * 2 + ("G",) * BENCH_SLOTS:
-        full.add(position_index(pos))
-    check("a full roster is full", full.is_full(), f"{full.filled()}/{full.size}")
-    check("a full roster rejects every position",
-          not any(full.can_add(i) for i in range(N_POSITION_SLOTS)))
-    check("a full roster has no open positions", full.open_positions() == [])
-
-    # UNK has no starting slot, so he is bench-only and must not be draftable once
-    # the bench is gone -- but must be draftable while it is open
-    unk = RosterState()
-    check("an unknown position is bench-eligible", unk.can_add(UNKNOWN_INDEX))
-    for _ in range(BENCH_SLOTS):
-        unk.add(UNKNOWN_INDEX)
-    check("unknown positions exhaust the bench", not unk.can_add(UNKNOWN_INDEX),
-          f"bench {unk.bench_used}/{unk.bench_seats}")
-    check("a real position still fits", unk.can_add(position_index("G")))
-
-    # need has to fall as a position fills, or the opponent model ignores its roster
-    fresh = RosterState()
-    before = fresh.need(position_index("C"))
-    fresh.add(position_index("C"))
-    after = fresh.need(position_index("C"))
-    check("need falls as a position fills", after < before,
-          f"{before:.2f} -> {after:.2f}")
-
-    # copy must not alias, or one simulation mutates another
-    original = RosterState()
-    original.add(position_index("G"))
-    clone = original.copy()
-    clone.add(position_index("G"))
-    check("copies are independent", original.counts[0] == 1 and clone.counts[0] == 2,
-          f"{original.counts[0]} vs {clone.counts[0]}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     print(f"slots {ROSTER_SLOTS}, bench {BENCH_SLOTS}, "
           f"roster size {roster_size()}\n")
-    verify()

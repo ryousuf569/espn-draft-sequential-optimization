@@ -258,43 +258,6 @@ def walk_forward(conn, seasons=SEASONS, val_seasons=VAL_SEASONS,
     return folds, preds
 
 
-# the folds have to actually be walk-forward, and the models have to beat chance
-def verify(folds, splits):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("folds were built", not folds.empty, f"{len(folds)} folds")
-
-    # THE check this file exists for: no fold may train on a season at or after the one
-    # it is scored on
-    leaks = [(train, val) for train, val in splits if any(s >= val for s in train)]
-    check("no fold trains on the future", not leaks, f"{len(leaks)} leaking folds")
-
-    check("training seasons are contiguous and prior",
-          all(max(train) < val for train, val in splits))
-
-    check("km beats chance", bool((folds["km_concordance_val"] > 0.5).all()),
-          f"{folds['km_concordance_val'].min():.4f}-{folds['km_concordance_val'].max():.4f}")
-
-    cox = folds["cox_concordance_val"].dropna()
-    if not cox.empty:
-        check("cox beats chance", bool((cox > 0.5).all()),
-              f"{cox.min():.4f}-{cox.max():.4f}")
-
-    # a validation concordance far above the training one means the split is wrong
-    if "cox_concordance_train" in folds:
-        gap = (folds["cox_concordance_val"] - folds["cox_concordance_train"]).abs()
-        check("train and val concordance are close", bool((gap < 0.15).all()),
-              f"max gap {gap.max():.4f}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 40)
@@ -309,7 +272,6 @@ if __name__ == "__main__":
     print()
 
     folds, preds = walk_forward(conn)
-    verify(folds, splits)
 
     cols = ["val_season", "train_seasons", "km_concordance_val",
             "cox_concordance_train", "cox_concordance_val",

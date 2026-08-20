@@ -248,44 +248,6 @@ def build_rookie_prior(draft_year, conn):
             .reset_index())
 
 
-# the covariates have to be populated and pointed the right way before fitting
-def verify(df):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("no rows lost", not df.empty, f"{len(df)} rows")
-    check("platform_rank populated", bool(df["platform_rank"].notna().all()))
-    check("rank_diff populated", bool(df["vorp_rank_diff"].notna().all()))
-    check("position is in the vocabulary",
-          bool(df["position"].isin(set(POSITION_MAP.values()) | {UNKNOWN_POSITION}).all()),
-          str(sorted(df["position"].unique())))
-    check("flags are 0/1", bool(df["rookie_flag"].isin((0, 1)).all()
-                                and df["injury_flag"].isin((0, 1)).all()))
-
-    # the design matrix has to be full rank or the Cox fit will not converge
-    design = cox_design(df)
-    covariates = design.drop(columns=["duration", "event_observed"])
-    kept, dropped = usable_covariates(df)
-    check("design matrix has no constant column",
-          bool(all(covariates[c].nunique() > 1 for c in covariates.columns)),
-          f"{len(kept)} kept" + (f", dropped {dropped}" if dropped else ""))
-    check("something is left to fit", len(kept) >= 2, f"{kept}")
-    check("reference position dropped",
-          f"pos_{POSITION_REFERENCE}" not in design.columns)
-
-    # a better board rank has to mean going earlier, or the join is misaligned
-    drafted = df[df["event_observed"] == 1]
-    corr = drafted["platform_rank"].corr(drafted["duration"])
-    check("platform_rank tracks duration", corr > 0.5, f"corr {corr:.3f}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 30)
@@ -297,7 +259,6 @@ if __name__ == "__main__":
     feats = build_cox_features(survival, season, conn)
 
     print(f"{season}: {len(feats)} rows, {feats['player_id'].nunique()} players\n")
-    verify(feats)
 
     print(f"\nrookie / injury coverage")
     print(f"  rookies          {int(feats['rookie_flag'].sum())}")

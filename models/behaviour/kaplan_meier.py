@@ -121,59 +121,6 @@ def prepare(conn, season):
     return attach_position(survival, season, conn)
 
 
-# a survival curve that is not monotone, or leaves [0, 1], is not a survival curve
-def verify(fitted, survival_df):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    player_curves = fitted["player_curves"]
-    group_curves = fitted["group_curves"]
-    groups = fitted["player_groups"]
-
-    check("curves were fit", len(player_curves) + len(group_curves) > 0,
-          f"{len(player_curves)} player, {len(group_curves)} group")
-
-    picks = list(range(1, TOTAL_PICKS + 1))
-    sample = list(player_curves.values())[:1] or list(group_curves.values())[:1]
-    curve = sample[0]
-    values = [curve_survival(curve, k) for k in picks]
-
-    check("survival is in [0, 1]", all(0.0 <= v <= 1.0 for v in values),
-          f"{min(values):.3f}-{max(values):.3f}")
-    check("survival never increases",
-          all(values[i] >= values[i + 1] - 1e-9 for i in range(len(values) - 1)))
-    check("survival starts at 1", np.isclose(curve_survival(curve, 0), 1.0))
-
-    # the elite tier has to empty faster than the late tier, or the group cut does nothing
-    elite = [c for k, c in group_curves.items() if "elite" in k]
-    late = [c for k, c in group_curves.items() if "late" in k]
-    if elite and late:
-        at_24 = (curve_survival(elite[0], 24), curve_survival(late[0], 24))
-        check("elite goes before late", at_24[0] < at_24[1],
-              f"{at_24[0]:.3f} vs {at_24[1]:.3f}")
-
-    # every player must resolve to something, or the rollout treats him as always there
-    unresolved = [pid for pid in list(groups)[:500]
-                  if resolve_curve(pid, player_curves, group_curves, groups)[0] is None]
-    check("every player resolves to a curve", not unresolved,
-          f"{len(unresolved)} unresolved")
-
-    # a top-ranked player must be gone by the end of the draft
-    top = survival_df.loc[survival_df["platform_rank"] == 1, "player_id"]
-    if not top.empty:
-        pid = int(top.iloc[0])
-        end = km_survival_prob(pid, TOTAL_PICKS, player_curves, group_curves, groups)
-        check("the consensus first pick does not survive the draft", end < 0.05,
-              f"S({TOTAL_PICKS}) = {end:.4f}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
 
@@ -186,7 +133,6 @@ if __name__ == "__main__":
     print(f"{season}: {len(survival)} rows, {survival['player_id'].nunique()} players, "
           f"{len(fitted['player_curves'])} player curves, "
           f"{len(fitted['group_curves'])} group curves\n")
-    verify(fitted, survival)
 
     print("\ngroup curves, survival by pick")
     header = f"{'group':<22}" + "".join(f"{k:>9}" for k in (12, 24, 48, 96, 150))

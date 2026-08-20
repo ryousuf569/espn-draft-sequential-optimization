@@ -123,62 +123,6 @@ def p_available_many(player_ids, pick_j, pick_k, behaviour, model="cox"):
             for pid in player_ids}
 
 
-# the conditional form has to behave like a probability, in the ways that matter
-def verify(behaviour):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    board = (behaviour.survival.drop_duplicates("player_id")
-             .sort_values("platform_rank"))
-    ids = board["player_id"].astype(int).tolist()
-
-    # a player around rank 30: the top is gone by pick 12 and the bottom never goes,
-    # so neither says anything about the conditional form
-    mid = ids[min(29, len(ids) - 1)]
-
-    for model in ("km", "cox"):
-        probs = [p_available(pid, 12, 24, behaviour, model) for pid in ids[:60]]
-        finite = [p for p in probs if not pd.isna(p)]
-
-        check(f"[{model}] probabilities are in [0, 1]",
-              all(0.0 <= p <= 1.0 for p in finite),
-              f"{min(finite):.3f}-{max(finite):.3f}")
-
-        # further away is less likely, always: the board only empties
-        falling = all(
-            p_available(mid, 12, k, behaviour, model)
-            >= p_available(mid, 12, k + 6, behaviour, model) - 1e-9
-            for k in range(12, TOTAL_PICKS - 6, 6))
-        check(f"[{model}] a later pick is never more available", falling)
-
-        # the same pick is certainty, by construction
-        check(f"[{model}] p_available(j, j) is 1",
-              np.isclose(p_available(mid, 30, 30, behaviour, model), 1.0))
-
-        # The property that separates this from raw S(k): the answer must depend on where
-        # the draft is, not only on the gap, or j is being ignored.
-        gaps = [p_available(mid, j, j + 12, behaviour, model) for j in (1, 24, 48)]
-        check(f"[{model}] the answer depends on where the draft is",
-              max(gaps) - min(gaps) > 1e-6,
-              " ".join(f"{g:.3f}" for g in gaps))
-
-    # The ratio must not equal raw S(k), measured where the player is genuinely in
-    # range -- at a pick where he is certainly gone both are 0 and prove nothing.
-    j, k = 24, 36
-    raw = behaviour.survival_at(mid, k, "cox")
-    conditional = p_available(mid, j, k, behaviour, "cox")
-    check("the ratio is not raw S(k)",
-          conditional > raw + 1e-6, f"raw S({k}) = {raw:.4f} vs "
-          f"S({k}|{j}) = {conditional:.4f}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
 
@@ -190,7 +134,6 @@ if __name__ == "__main__":
     print(f"{season}: {behaviour.survival['player_id'].nunique()} players, "
           f"{len(behaviour.km['player_curves'])} player curves, "
           f"cox {'fit' if behaviour.cox is not None else 'skipped'}\n")
-    verify(behaviour)
 
     names = dict(conn.execute("SELECT player_id, name FROM players"))
     board = (behaviour.survival.drop_duplicates("player_id")

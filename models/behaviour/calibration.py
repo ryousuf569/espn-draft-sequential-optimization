@@ -146,72 +146,8 @@ def observed_availability(survival_df, pick_j, pick_k):
     return at_risk.assign(observed=available.to_numpy())
 
 
-# the metrics have to behave on cases where the answer is known in advance
-def verify():
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    rng = np.random.default_rng(RANDOM_SEED)
-
-    # a perfectly calibrated model: outcomes drawn at exactly the stated rate
-    truth = rng.uniform(0, 1, 20000)
-    outcomes = rng.binomial(1, truth)
-    check("a calibrated model scores near zero",
-          expected_calibration_error(truth, outcomes) < 0.02,
-          f"ece {expected_calibration_error(truth, outcomes):.4f}")
-
-    # a model that is confidently wrong: predictions inverted
-    check("an inverted model scores badly",
-          expected_calibration_error(1.0 - truth, outcomes) > 0.3,
-          f"ece {expected_calibration_error(1.0 - truth, outcomes):.4f}")
-
-    # Brier has to prefer the honest model over the base-rate one, which is what makes
-    # it worth reporting alongside ECE
-    base = np.full_like(truth, outcomes.mean())
-    check("brier prefers the informative model",
-          brier_score(truth, outcomes) < brier_score(base, outcomes),
-          f"{brier_score(truth, outcomes):.4f} vs {brier_score(base, outcomes):.4f}")
-
-    # ECE cannot tell them apart, which is exactly why both are reported
-    check("ece cannot tell them apart",
-          expected_calibration_error(base, outcomes) < 0.02,
-          f"base-rate ece {expected_calibration_error(base, outcomes):.4f}")
-
-    # isotonic has to repair a known distortion, fit and applied out of sample
-    split = len(truth) // 2
-    skewed = np.clip(truth ** 2, 0, 1)
-    calibrator = calibrate(skewed[:split], outcomes[:split])
-    fixed = apply_calibrator(calibrator, skewed[split:])
-
-    before = expected_calibration_error(skewed[split:], outcomes[split:])
-    after = expected_calibration_error(fixed, outcomes[split:])
-    check("isotonic repairs a skewed model out of sample", after < before,
-          f"ece {before:.4f} -> {after:.4f}")
-
-    # it must not reorder anything, or it fixed the level by breaking the ranking
-    order_before = np.argsort(skewed[split:])
-    order_after = np.argsort(fixed, kind="stable")
-    check("isotonic preserves the ordering",
-          bool(np.all(fixed[order_before] == np.sort(fixed))),
-          f"{len(fixed)} points")
-
-    # a prediction of exactly 0 or 1 has to land in a bin
-    table = reliability_table([0.0, 1.0, 0.5], [0, 1, 1], n_bins=10)
-    check("the extremes land in bins", int(table["n"].sum()) == 3,
-          f"{int(table['n'].sum())} of 3")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
-
-    verify()
 
     # the real thing: score the fitted model against what the drafts actually did
     from query import Behaviour, p_available

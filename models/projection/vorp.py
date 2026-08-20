@@ -116,44 +116,6 @@ def build_sorted_pools(projections_df):
     return pools
 
 
-# the two paths have to agree, or the rollout is optimising a different game
-def verify(df, n_teams=DEFAULT_N_TEAMS):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    valued = add_vorp(df, n_teams)
-    pools = build_sorted_pools(valued)
-
-    # with nobody drafted the dynamic version is the static one
-    for pos in DEFAULT_SLOTS:
-        if pos not in pools:
-            continue
-        static = replacement_level(valued, pos, n_teams, DEFAULT_SLOTS[pos])
-        dynamic = dynamic_replacement_level(pools[pos], pos, set(), n_teams)
-        check(f"static and dynamic agree on {pos}",
-              bool(np.isclose(static, dynamic)), f"{static:.4f} vs {dynamic:.4f}")
-
-    # drafting the best players can only push replacement level down
-    pos = "G"
-    if pos in pools:
-        top = set(pools[pos][0][:12].tolist())
-        before = dynamic_replacement_level(pools[pos], pos, set(), n_teams)
-        after = dynamic_replacement_level(pools[pos], pos, top, n_teams)
-        check("replacement falls as the pool empties", after <= before,
-              f"{before:.4f} -> {after:.4f}")
-
-    check("vorp is centered near the cutoff", bool((valued["vorp"] > 0).any()))
-    check("turnovers score negatively",
-          category_zscores(valued)["tov"].corr(valued["tov"]) < 0)
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
 
@@ -165,7 +127,6 @@ if __name__ == "__main__":
     ranked = add_vorp(proj)
 
     print(f"{len(ranked)} players, {DEFAULT_N_TEAMS} teams\n")
-    verify(proj)
 
     print("\nreplacement level by position")
     for pos, slots in DEFAULT_SLOTS.items():

@@ -1,0 +1,60 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      with_database:
+        description: "Download the published database and run the data-dependent tests too"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - run: pip install -r requirements.txt pytest
+
+      # The DB is a release asset, never committed, so the default run has none and
+      # the tests that need one skip themselves. Fetch it only when asked, so a
+      # normal PR does not wait on a 60 MB download.
+      - name: Download database
+        if: inputs.with_database
+        continue-on-error: true
+        run: |
+          gh release download data-latest --pattern 'nba.sqlite.gz' --dir data/ \
+            && gunzip -f data/nba.sqlite.gz \
+            && echo "database restored"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests
+        run: python -m pytest -v
+
+      # A green run with everything skipped would look identical to a green run that
+      # tested something, so the pure-logic subset is run on its own. pytest exits 5
+      # when it collects nothing, which turns an empty suite into a failure.
+      - name: Check the pure-logic tests actually ran
+        run: python -m pytest -m "not needs_db"

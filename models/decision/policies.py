@@ -118,74 +118,6 @@ def get_policy(name):
     return POLICIES[name]
 
 
-# the ladder has to be a ladder: each rung must differ from the one below it
-def verify(board):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    from roster import RosterState
-
-    available = np.ones(len(board), dtype=bool)
-    check("every rung is registered",
-          set(POLICIES) == set(config.POLICY_NAMES), f"{len(POLICIES)} rungs")
-
-    # on an empty board each greedy rung must return something legal
-    for name in config.BASELINE_POLICIES:
-        idx = POLICIES[name](board, available, RosterState())
-        legal = idx >= 0 and idx < len(board)
-        check(f"{name} picks a legal player", legal, f"index {idx}")
-
-    # rung 0 must take the consensus first pick, by definition
-    idx0 = rung0_adp(board, available, RosterState())
-    check("rung 0 takes board rank 1", int(board.ranks[idx0]) == 1,
-          f"rank {int(board.ranks[idx0])}")
-
-    # rung 1 must take the highest implied value, which need not be rank 1
-    idx1 = rung1_best_available(board, available, RosterState())
-    check("rung 1 takes the highest value",
-          np.isclose(board.values[idx1], board.values.max()),
-          f"value {board.values[idx1]:.2f}")
-
-    # rung 2 must take the highest VORP, and this is the rung-1-vs-2 distinction
-    idx2 = rung2_vorp_greedy(board, available, RosterState())
-    check("rung 2 takes the highest vorp",
-          np.isclose(board.vorps[idx2], board.vorps.max()),
-          f"vorp {board.vorps[idx2]:.2f}")
-
-    # if rungs 1 and 2 always agreed, scarcity would be doing nothing and the ladder
-    # would carry a redundant rung
-    agree = 0
-    for pos_filled in range(4):
-        state = RosterState()
-        for _ in range(pos_filled):
-            state.add(0)
-        if (rung1_best_available(board, available, state)
-                == rung2_vorp_greedy(board, available, state)):
-            agree += 1
-    check("value and vorp disagree somewhere", agree < 4, f"{agree}/4 agreed")
-
-    # rungs 3 and 4 degrade to their greedy equivalent without Model B rather than
-    # crash, so a fold with no fitted model still produces a roster
-    idx3 = rung3_vorp_sequencing(board, available, RosterState())
-    check("rung 3 falls back to vorp with no model", idx3 == idx2,
-          f"{idx3} vs {idx2}")
-
-    # a full roster must return -1 from every rung, not raise
-    full = RosterState()
-    for pos in (0,) * 4 + (1,) * 4 + (2,) * 2 + (0,) * 3:
-        full.add(pos)
-    for name in config.BASELINE_POLICIES:
-        check(f"{name} returns -1 on a full roster",
-              POLICIES[name](board, available, full) == -1)
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     from board import Board
     from config import connect
@@ -197,8 +129,6 @@ if __name__ == "__main__":
     for name in config.POLICY_NAMES:
         print(f"  {name:24} {QUESTIONS[name]}")
     print()
-
-    verify(board)
 
     # what the greedy rungs actually take first, which is the clearest single view
     # of how the rungs differ

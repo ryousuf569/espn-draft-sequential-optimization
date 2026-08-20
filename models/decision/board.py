@@ -255,56 +255,6 @@ def _spearman(a, b):
     return float(np.corrcoef(ra, rb)[0, 1])
 
 
-# the board has to be ordered, valued and scoreable before anything drafts from it
-def verify(board):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("board is populated", len(board) > 100, f"{len(board)} players")
-    check("ranks are unique and dense",
-          bool(np.array_equal(np.sort(board.ranks), np.arange(1, len(board) + 1))))
-    check("no missing values", bool(np.isfinite(board.values).all()))
-    check("no missing realized value", bool(np.isfinite(board.realized).all()))
-    check("positions are in range",
-          bool(((board.positions >= 0) & (board.positions <= 3)).all()),
-          f"{sorted(set(board.positions.tolist()))}")
-
-    # Rank order, not Pearson: the curve is convex, so a linear coefficient
-    # understates a relationship that is genuinely strong.
-    rho = _spearman(board.ranks, board.values)
-    check("implied value tracks rank", rho < -0.6, f"spearman {rho:.3f}")
-
-    # but it must NOT be a pure function of rank, or rung 1 is rung 0 under another
-    # name and the ladder has a dead rung -- see _board_detail
-    same = np.array_equal(np.argsort(board.ranks), np.argsort(-board.values))
-    overlap = len(set(np.argsort(board.ranks)[:24].tolist())
-                  & set(np.argsort(-board.values)[:24].tolist()))
-    check("value order differs from rank order", not same,
-          f"top-24 overlap {overlap}/24")
-
-    # and it must NOT be the realized outcome, or the value is leaking the answer
-    leak = np.corrcoef(board.values, board.realized)[0, 1]
-    check("implied value is not the outcome", leak < 0.95, f"corr {leak:.3f}")
-
-    # VORP has to differ from raw value, or positional scarcity is doing nothing
-    check("vorp differs from value",
-          not np.allclose(board.values, board.vorps),
-          f"mean gap {np.mean(np.abs(board.values - board.vorps)):.3f}")
-
-    # the top of the board has to be worth more than the bottom, realized
-    top = board.realized[:24].mean()
-    bottom = board.realized[-24:].mean()
-    check("the top of the board really is better", top > bottom,
-          f"{top:.2f} vs {bottom:.2f}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 30)
@@ -315,7 +265,6 @@ if __name__ == "__main__":
     board = Board(conn, season, n_teams=config.N_TEAMS)
 
     print(f"{season}: {len(board)} players, {config.N_TEAMS} teams\n")
-    verify(board)
 
     names = dict(conn.execute("SELECT player_id, name FROM players"))
     print("\ntop of the board")

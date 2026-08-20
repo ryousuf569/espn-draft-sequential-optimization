@@ -95,26 +95,6 @@ def validate(conn, test_season=TEST_SEASON, out_csv=OUT_CSV):
     return out
 
 
-# the test season must not appear in training, and the naive bar has to be beaten
-def verify(df, feature_df, test_season=TEST_SEASON):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    seasons = train_seasons_before(feature_df, test_season)
-    check("test season excluded from training", test_season not in seasons,
-          f"{seasons[0]}..{seasons[-1]}")
-    check("training stops the season before", seasons[-1] < test_season)
-    check("every player scored once", not df["player_id"].duplicated().any())
-    check("predictions are populated", df["mpg_pred"].notna().all())
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
 
@@ -126,7 +106,6 @@ if __name__ == "__main__":
 
     print(f"trained {seasons[0]}..{seasons[-1]} ({len(seasons)} seasons), "
           f"scored {TEST_SEASON}: {len(df)} players\n")
-    verify(df, rate_feats)
 
     print(f"\n{'target':10} {'n':>5} {'MAE':>10} {'bias':>11} {'mean_actual':>12}")
     for target in TARGETS:

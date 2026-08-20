@@ -204,47 +204,6 @@ def attach_adp_tier(survival_df, conn):
     return merged
 
 
-# the table has to hold up as survival data before anything is fit on it
-def verify(df, conn):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("table is not empty", not df.empty, f"{len(df)} rows")
-    check("one row per draft and player",
-          not df.duplicated(["draft_id", "player_id"]).any())
-    check("event is 0 or 1", bool(df["event_observed"].isin((0, 1)).all()))
-    check("durations are positive", bool((df["duration"] >= 1).all()),
-          f"min {df['duration'].min()}")
-
-    # a drafted player's duration is his pick, so it cannot exceed the draft
-    lengths = df.groupby("draft_id")["duration"].max()
-    check("durations stay inside the draft", bool((lengths <= TOTAL_PICKS).all()),
-          f"longest {int(lengths.max())}")
-
-    # censoring is the whole point: with no censored rows every curve falls to zero
-    censored = int((df["event_observed"] == 0).sum())
-    check("censored rows exist", censored > 0,
-          f"{censored} of {len(df)} ({censored / len(df):.1%})")
-
-    # each draft's event count is its length, or the risk set is being double counted
-    per_draft = df[df["event_observed"] == 1].groupby("draft_id").size()
-    check("events per draft equal the draft length",
-          bool((per_draft == lengths.reindex(per_draft.index)).all()),
-          f"{int(per_draft.iloc[0])} picks")
-
-    # earlier ADP has to survive less, or the table is scrambled
-    drafted = df[df["event_observed"] == 1]
-    corr = drafted["platform_rank"].corr(drafted["duration"])
-    check("better ADP goes earlier", corr > 0.5, f"corr {corr:.3f}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 30)
@@ -255,7 +214,6 @@ if __name__ == "__main__":
     n_real = int((df["is_synthetic"] == 0).sum())
     print(f"{len(df)} rows, {df['draft_id'].nunique()} drafts, "
           f"{df['season'].nunique()} seasons, {n_real} from real drafts\n")
-    verify(df, conn)
 
     print("\nby season")
     print(df.groupby("season").agg(

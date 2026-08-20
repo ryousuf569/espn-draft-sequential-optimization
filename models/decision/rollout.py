@@ -254,98 +254,6 @@ def recommend(behaviour, board, taken, my_state, my_picks, opponent_states,
     return sorted(results, key=lambda r: r["expected_total"], reverse=True)
 
 
-# the rollout has to obey the draft's structure and the roster's rules
-def verify(behaviour, board):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    n_teams, total = config.N_TEAMS, config.TOTAL_PICKS
-
-    # snake order: every team gets the same number of picks, and the turn gap
-    # alternates, which is the structure the whole thesis depends on
-    counts = [len(picks_for_slot(s, n_teams, total)) for s in range(n_teams)]
-    check("every slot gets the same picks", len(set(counts)) == 1, f"{counts[0]}")
-    check("picks match the roster size", counts[0] == roster_size(),
-          f"{counts[0]} picks, roster {roster_size()}")
-
-    first = picks_for_slot(0, n_teams, total)
-    check("slot 1 picks first and turns at 1-24", first[:2] == [1, 24],
-          f"{first[:3]}")
-    last = picks_for_slot(n_teams - 1, n_teams, total)
-    check("the last slot turns back-to-back", last[:2] == [12, 13], f"{last[:3]}")
-
-    # pick scaling has to land inside Model B's fitted range
-    check("pick scaling stays in the fitted range",
-          scale_pick(total, total) <= BEHAVIOUR_TOTAL_PICKS + 1e-9,
-          f"{scale_pick(total, total):.1f} of {BEHAVIOUR_TOTAL_PICKS}")
-
-    hazard = build_hazard_matrix(behaviour, board, total)
-    check("hazard matrix is populated", bool(np.isfinite(hazard).all()),
-          f"{hazard.shape}")
-    check("every pick has mass somewhere",
-          bool((hazard[1:].sum(axis=1) > MIN_WEIGHT).all()))
-
-    # the top of the board must carry more early hazard than the bottom, or the
-    # opponent model is not following the board at all
-    early = hazard[1:13, :24].sum()
-    late = hazard[1:13, -24:].sum()
-    check("early picks concentrate on the top of the board", early > late,
-          f"{early:.3f} vs {late:.3f}")
-
-    # a simulation must never overfill a roster or draft a player twice
-    taken = np.zeros(len(board), dtype=bool)
-    state = RosterState()
-    my_picks = picks_for_slot(0, n_teams, total)
-    opponents = [RosterState() for _ in range(n_teams)]
-    rng = np.random.default_rng(RANDOM_SEED)
-
-    values, vorps = board.values, board.vorps
-    total_value, filled = simulate_once(hazard, board, taken.copy(), state, my_picks,
-                                       opponents, n_teams, total, rng, 1, values, vorps)
-    check("a simulation returns finite value", np.isfinite(total_value),
-          f"{total_value:.2f}")
-
-    # a full snake draft must fill your roster to exactly the roster size: one
-    # short means a pick was skipped, one over means legality was not enforced
-    check("your roster fills exactly", filled.filled() == roster_size(),
-          f"{filled.filled()}/{roster_size()}")
-    check("no opponent roster overfills",
-          all(s.filled() <= roster_size() for s in opponents),
-          f"max {max(s.filled() for s in opponents)}")
-
-    # the caller's own state must be untouched, since the rollout copies it
-    check("the simulation does not mutate the state it was given",
-          state.filled() == 0, f"{state.filled()}")
-
-    # THE §8.1 claim: a scarcer player should win on expected value with nothing in
-    # the objective saying so. Tested by making one candidate far likelier to vanish.
-    recs = recommend(behaviour, board, np.zeros(len(board), dtype=bool),
-                     RosterState(), my_picks, [RosterState() for _ in range(n_teams)],
-                     n_teams, total, n_sims=40, n_candidates=5, hazard=hazard)
-    check("the recommender returns ranked candidates", len(recs) > 0,
-          f"{len(recs)} candidates")
-    check("expected totals are finite",
-          all(np.isfinite(r["expected_total"]) for r in recs))
-    check("results are sorted best first",
-          all(recs[i]["expected_total"] >= recs[i + 1]["expected_total"]
-              for i in range(len(recs) - 1)))
-
-    # taking a player must not mutate the caller's state
-    fresh = RosterState()
-    recommend(behaviour, board, np.zeros(len(board), dtype=bool), fresh, my_picks,
-              [RosterState() for _ in range(n_teams)], n_teams, total,
-              n_sims=10, n_candidates=3, hazard=hazard)
-    check("the recommender does not mutate your roster", fresh.filled() == 0,
-          f"{fresh.filled()}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     import time
     from board import Board
@@ -363,8 +271,6 @@ if __name__ == "__main__":
     t = time.time()
     behaviour = behaviour_query.Behaviour(conn, season)
     print(f"Model B fitted in {time.time() - t:.1f}s\n")
-
-    verify(behaviour, board)
 
     names = dict(conn.execute("SELECT player_id, name FROM players"))
     hazard = build_hazard_matrix(behaviour, board, total)

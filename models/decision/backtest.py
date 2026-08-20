@@ -261,55 +261,6 @@ def by_slot(df, metric="starter_value"):
                               if p in set(df["policy"])]))
 
 
-# the harness has to be a fair comparison before any of its numbers mean anything
-def verify(df):
-    ok = True
-
-    def check(name, passed, detail=""):
-        nonlocal ok
-        print(f"  {'ok  ' if passed else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
-        ok = ok and bool(passed)
-
-    check("backtest produced drafts", not df.empty, f"{len(df)} drafts")
-    check("every roster is legal", bool(df["legal"].all()),
-          f"{int((~df['legal']).sum())} illegal")
-    check("every roster is full", bool((df["roster_size"] == roster_size()).all()),
-          f"sizes {sorted(df['roster_size'].unique())}")
-
-    # every policy must run the same drafts, or this compares draft populations
-    counts = df.groupby("policy").size()
-    check("every policy ran the same number of drafts",
-          counts.nunique() == 1, f"{counts.to_dict()}")
-
-    slots = df.groupby("policy")["draft_slot"].nunique()
-    check("every draft slot was swept", slots.nunique() == 1 and slots.iloc[0] > 1,
-          f"{slots.iloc[0]} slots")
-
-    # a policy must vary across seeds, or the sweep is fake and every spread collapses
-    spread = df.groupby(["policy", "draft_slot"])["starter_value"].std()
-    check("seeds produce a distribution", float(spread.max()) > 0,
-          f"max sd {spread.max():.3f}")
-
-    # the paired comparison must line up, or the win rates use mismatched drafts
-    edges = compare_to_baseline(df)
-    if not edges.empty:
-        check("paired comparison lines up",
-              bool((edges["n"] == len(df[df["policy"] == "rung0_adp"])).all()),
-              f"{edges['n'].tolist()}")
-        check("win rates are probabilities",
-              bool(((edges["win_rate"] >= 0) & (edges["win_rate"] <= 1)).all()))
-
-    # Starters plus bench must equal the total, NOT starters <= total: realized value
-    # is signed, so a below-replacement bench legitimately exceeds the whole roster.
-    parts = df["starter_value"] + df["bench_value"]
-    check("starters plus bench equal the roster",
-          bool(np.allclose(parts, df["roster_value"], atol=1e-6)),
-          f"max gap {float((parts - df['roster_value']).abs().max()):.2e}")
-
-    print("all good" if ok else "SOMETHING IS WRONG")
-    return ok
-
-
 if __name__ == "__main__":
     import argparse
     import time
@@ -345,8 +296,6 @@ if __name__ == "__main__":
 
     df = pd.concat(frames, ignore_index=True)
     print(f"\n{len(df)} drafts in {time.time() - t0:.0f}s\n")
-
-    verify(df)
 
     print("\nthe ablation ladder, scored on realized starter value")
     ladder = ablation_ladder(df)
